@@ -1,3 +1,7 @@
+import "dotenv/config";
+
+const apiToken = `Token ${process.env.MAKE_API_TOKEN}`;
+
 const replaceResponseModuleContent = async (filePath: string) => {
   const file = Bun.file(filePath);
   const content = await file.text();
@@ -14,8 +18,15 @@ const replaceResponseModuleContent = async (filePath: string) => {
 
   const scenarioId = scenarioIdMatch[1];
   const moduleId = moduleIdMatch[1];
-  //TODO: call make request to get scenario blueprint
+  const getBlueprintVersionsResponse = await fetch(
+    `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprints`,
+    { headers: { Authorization: apiToken } },
+  );
+  const scenarioVersionId = await getBlueprintVersionsResponse.json(); //TODO
+  console.log(scenarioVersions);
   //TODO: find the module and replace the content
 };
+
+console.log(process.env.MAKE_API_TOKEN);
 
 await replaceResponseModuleContent("src/pages/landing.html");
