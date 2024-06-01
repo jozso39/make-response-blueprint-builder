@@ -1,8 +1,17 @@
 import "dotenv/config";
-
-const apiToken = `Token ${process.env.MAKE_API_TOKEN}`;
+import type { BlueprintVersionsResponseBody } from "./blueprint.types";
 
 const replaceResponseModuleContent = async (filePath: string) => {
+  // verify the api token
+  const apiToken = process.env.MAKE_API_TOKEN as string;
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (!uuidRegex.test(apiToken))
+    throw new Error(
+      "The MAKE_API_TOKEN Doesnt match the regex for UUID token.",
+    );
+  const apiTokenHeader = "Token " + apiToken;
+
   const file = Bun.file(filePath);
   const content = await file.text();
   const scenarioIdMatch = content.match(/<!-- scenarioId=(\d{1,7}) -->/);
@@ -20,13 +29,35 @@ const replaceResponseModuleContent = async (filePath: string) => {
   const moduleId = moduleIdMatch[1];
   const getBlueprintVersionsResponse = await fetch(
     `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprints`,
-    { headers: { Authorization: apiToken } },
+    { headers: { Authorization: apiTokenHeader } },
   );
-  const scenarioVersionId = await getBlueprintVersionsResponse.json(); //TODO
-  console.log(scenarioVersions);
-  //TODO: find the module and replace the content
-};
+  // TODO: verify request status
+  if (getBlueprintVersionsResponse.status !== 200)
+    throw new Error(
+      "Blueprint versions request response is " +
+        getBlueprintVersionsResponse.status,
+    );
+  const getBlueprintVersionsJson =
+    (await getBlueprintVersionsResponse.json()) as BlueprintVersionsResponseBody;
+  if (!getBlueprintVersionsJson.scenariosBlueprints)
+    throw new Error("Blueprint versions request probably failed");
 
-console.log(process.env.MAKE_API_TOKEN);
+  const sortedBlueprintVersions =
+    getBlueprintVersionsJson.scenariosBlueprints.sort(
+      (a, b) => b.version - a.version,
+    );
+
+  const getNewestBlueprintResponse = await fetch(
+    `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprint?blueprintId=${sortedBlueprintVersions[0].version}`,
+    { headers: { Authorization: apiTokenHeader } },
+  );
+  if (getNewestBlueprintResponse.status !== 200)
+    throw new Error(
+      "Blueprint request response is " + getNewestBlueprintResponse.status,
+    );
+
+  const getNewestBlueprint = await getNewestBlueprintResponse.json();
+  console.log(JSON.stringify(getNewestBlueprint));
+};
 
 await replaceResponseModuleContent("src/pages/landing.html");
