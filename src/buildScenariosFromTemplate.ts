@@ -1,5 +1,11 @@
 import "dotenv/config";
-import type { BlueprintVersionsResponseBody } from "./blueprint.types";
+import type {
+  Blueprint,
+  BlueprintResponse,
+  BlueprintVersionsResponseBody,
+  Flow,
+  Route,
+} from "./blueprint.types";
 
 const replaceResponseModuleContent = async (filePath: string) => {
   // verify the api token
@@ -56,8 +62,37 @@ const replaceResponseModuleContent = async (filePath: string) => {
       "Blueprint request response is " + getNewestBlueprintResponse.status,
     );
 
-  const getNewestBlueprint = await getNewestBlueprintResponse.json();
-  console.log(JSON.stringify(getNewestBlueprint));
+  const getNewestBlueprint =
+    (await getNewestBlueprintResponse.json()) as BlueprintResponse;
+
+  const updatedFlow = updateFlow(
+    getNewestBlueprint.response.blueprint.flow,
+    parseInt(moduleId),
+    content,
+  );
+
+  const newBlueprint = {
+    ...getNewestBlueprint.response.blueprint,
+    flow: updatedFlow,
+  };
+  console.log(newBlueprint);
+  // console.log(JSON.stringify(getNewestBlueprint));
 };
+
+function updateFlow(flow: Flow, moduleId: number, newContent: string) {
+  for (const module of flow) {
+    if (module.id === moduleId) {
+      module.mapper.body = newContent;
+    }
+
+    if (module.routes) {
+      for (const route of module.routes) {
+        updateFlow(route.flow, moduleId, newContent);
+      }
+    }
+  }
+
+  return flow;
+}
 
 await replaceResponseModuleContent("src/pages/landing.html");
