@@ -75,8 +75,23 @@ const replaceResponseModuleContent = async (filePath: string) => {
     ...getNewestBlueprint.response.blueprint,
     flow: updatedFlow,
   };
-  console.log(newBlueprint);
-  // console.log(JSON.stringify(getNewestBlueprint));
+  // console.log(JSON.stringify({ blueprint: JSON.stringify(newBlueprint) }));
+
+  const updateScenarioResponse = await fetch(
+    `https://we.make.com/api/v2/scenarios/${scenarioId}?confirmed=true`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: apiTokenHeader,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ blueprint: JSON.stringify(newBlueprint) }),
+    },
+  );
+  if (updateScenarioResponse.status != 200)
+    throw new Error(
+      `The request for updating scenario blueprint failed with status code ${updateScenarioResponse.status}`,
+    );
 };
 
 function updateFlow(flow: Flow, moduleId: number, newContent: string) {
