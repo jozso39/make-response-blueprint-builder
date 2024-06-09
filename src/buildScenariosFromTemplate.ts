@@ -6,6 +6,7 @@ import type {
   Flow,
   Route,
 } from "./blueprint.types";
+import { Glob } from "bun";
 
 const replaceResponseModuleContent = async (filePath: string) => {
   // verify the api token
@@ -92,9 +93,10 @@ const replaceResponseModuleContent = async (filePath: string) => {
     throw new Error(
       `The request for updating scenario blueprint failed with status code ${updateScenarioResponse.status}`,
     );
+  return { succeeded: true, scenarioId, moduleId };
 };
 
-function updateFlow(flow: Flow, moduleId: number, newContent: string) {
+const updateFlow = (flow: Flow, moduleId: number, newContent: string) => {
   for (const module of flow) {
     if (module.id === moduleId) {
       module.mapper.body = newContent;
@@ -106,8 +108,18 @@ function updateFlow(flow: Flow, moduleId: number, newContent: string) {
       }
     }
   }
-
   return flow;
-}
+};
 
-await replaceResponseModuleContent("src/pages/landing.html");
+const replaceForAnyHtml = async (folderPath: string) => {
+  const htmlGlob = new Glob(folderPath + "/*.html");
+
+  for (const file of htmlGlob.scanSync(".")) {
+    const result = await replaceResponseModuleContent(file);
+    if (result.succeeded)
+      console.log(
+        `content from ${file} has been uploaded to scenario:${result.scenarioId} module:${result.moduleId}`,
+      );
+  }
+};
+replaceForAnyHtml("src/pages");
