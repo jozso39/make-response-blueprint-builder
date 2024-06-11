@@ -27,6 +27,9 @@ const replaceResponseModuleContent = async (filePath: string) => {
       'scenario ID must be defined as comment in HTML like this: "<!-- scenarioId=123 -->"',
     );
   const moduleIdMatch = content.match(/<!-- moduleId=(\d{1,7}) -->/);
+  const mapperChildMatch = content.match(
+    /<!-- mapperChild=([a-zA-Z0-9]{1,30}) -->/,
+  );
   if (!moduleIdMatch)
     throw new Error(
       'module ID must be defined as comment in HTML like this: "<!-- moduleId=123 -->"',
@@ -34,6 +37,8 @@ const replaceResponseModuleContent = async (filePath: string) => {
 
   const scenarioId = scenarioIdMatch[1];
   const moduleId = moduleIdMatch[1];
+
+  const mapperChild = mapperChildMatch ? mapperChildMatch[1] : undefined;
   const getBlueprintVersionsResponse = await fetch(
     `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprints`,
     { headers: { Authorization: apiTokenHeader } },
@@ -70,6 +75,7 @@ const replaceResponseModuleContent = async (filePath: string) => {
     getNewestBlueprint.response.blueprint.flow,
     parseInt(moduleId),
     content,
+    mapperChild,
   );
 
   const newBlueprint = {
@@ -96,15 +102,20 @@ const replaceResponseModuleContent = async (filePath: string) => {
   return { succeeded: true, scenarioId, moduleId };
 };
 
-const updateFlow = (flow: Flow, moduleId: number, newContent: string) => {
+const updateFlow = (
+  flow: Flow,
+  moduleId: number,
+  newContent: string,
+  mapperChild: string = "body",
+) => {
   for (const module of flow) {
     if (module.id === moduleId) {
-      module.mapper.body = newContent;
+      module.mapper[mapperChild] = newContent;
     }
 
     if (module.routes) {
       for (const route of module.routes) {
-        updateFlow(route.flow, moduleId, newContent);
+        updateFlow(route.flow, moduleId, newContent, mapperChild);
       }
     }
   }
