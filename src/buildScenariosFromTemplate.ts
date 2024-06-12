@@ -4,21 +4,86 @@ import type {
   BlueprintResponse,
   BlueprintVersionsResponseBody,
   Flow,
-  Route,
 } from "./blueprint.types";
 import { Glob } from "bun";
 
-const replaceResponseModuleContent = async (filePath: string) => {
-  // verify the api token
-  const apiToken = process.env.MAKE_API_TOKEN as string;
-  const uuidRegex =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  if (!uuidRegex.test(apiToken))
-    throw new Error(
-      "The MAKE_API_TOKEN Doesnt match the regex for UUID token.",
-    );
-  const apiTokenHeader = "Token " + apiToken;
+type FileData = {
+  fileContent: string;
+  scenarioId: string;
+  moduleId: string;
+  mapperChild?: string;
+};
 
+type BlueprintToScenario = {
+  blueprint: Blueprint;
+  scenarioId: string;
+};
+
+const getBlueprints = async (
+  fileDataArray: FileData[],
+): Promise<BlueprintToScenario[]> => {
+  let blueprintContents: BlueprintToScenario[] = [];
+  for (const fileData of fileDataArray) {
+    if (
+      blueprintContents.filter(
+        (content) => content.scenarioId === fileData.scenarioId,
+      ).length
+    ) {
+      console.log(
+        `Will not download blueprint for scenario ID ${fileData.scenarioId}, because its already downloaded`,
+      );
+      continue;
+    }
+
+    const apiToken = process.env.MAKE_API_TOKEN as string;
+    const apiTokenHeader = "Token " + apiToken;
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    if (!uuidRegex.test(apiToken))
+      throw new Error(
+        "The MAKE_API_TOKEN Doesnt match the regex for UUID token.",
+      );
+
+    const getBlueprintVersionsResponse = await fetch(
+      `https://we.make.com/api/v2/scenarios/${fileData.scenarioId}/blueprints`,
+      { headers: { Authorization: apiTokenHeader } },
+    );
+    if (getBlueprintVersionsResponse.status !== 200)
+      throw new Error(
+        "Blueprint versions request response is " +
+          getBlueprintVersionsResponse.status,
+      );
+    const getBlueprintVersionsJson =
+      (await getBlueprintVersionsResponse.json()) as BlueprintVersionsResponseBody;
+    if (!getBlueprintVersionsJson.scenariosBlueprints)
+      throw new Error("Blueprint versions request probably failed");
+
+    const sortedBlueprintVersions =
+      getBlueprintVersionsJson.scenariosBlueprints.sort(
+        (a, b) => b.version - a.version,
+      );
+
+    const getNewestBlueprintResponse = await fetch(
+      `https://we.make.com/api/v2/scenarios/${fileData.scenarioId}/blueprint?blueprintId=${sortedBlueprintVersions[0].version}`,
+      { headers: { Authorization: apiTokenHeader } },
+    );
+    if (getNewestBlueprintResponse.status !== 200)
+      throw new Error(
+        "Blueprint request response is " + getNewestBlueprintResponse.status,
+      );
+
+    const getNewestBlueprint =
+      (await getNewestBlueprintResponse.json()) as BlueprintResponse;
+    blueprintContents.push({
+      scenarioId: fileData.scenarioId,
+      blueprint: getNewestBlueprint.response.blueprint,
+    });
+    console.log(`Downloaded blueprint for scenario ID ${fileData.scenarioId}`);
+  }
+  return blueprintContents;
+};
+
+const getFileContents = async (filePath: string): Promise<FileData> => {
   const file = Bun.file(filePath);
   const content = await file.text();
   const scenarioIdMatch = content.match(/<!-- scenarioId=(\d{1,7}) -->/);
@@ -39,77 +104,77 @@ const replaceResponseModuleContent = async (filePath: string) => {
   const moduleId = moduleIdMatch[1];
 
   const mapperChild = mapperChildMatch ? mapperChildMatch[1] : undefined;
-  const getBlueprintVersionsResponse = await fetch(
-    `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprints`,
-    { headers: { Authorization: apiTokenHeader } },
-  );
-  // TODO: verify request status
-  if (getBlueprintVersionsResponse.status !== 200)
-    throw new Error(
-      "Blueprint versions request response is " +
-        getBlueprintVersionsResponse.status,
+  return { fileContent: content, scenarioId, moduleId, mapperChild };
+};
+
+const updateBlueprints = async (
+  fileDataArray: FileData[],
+  blueprintScenarioPairs: BlueprintToScenario[],
+): Promise<BlueprintToScenario[]> => {
+  let newBlueprintScenarioPairs: BlueprintToScenario[] = [];
+  for (const blueprintPair of blueprintScenarioPairs) {
+    const thisScenariosData = fileDataArray.filter(
+      (fileData) => fileData.scenarioId === blueprintPair.scenarioId,
     );
-  const getBlueprintVersionsJson =
-    (await getBlueprintVersionsResponse.json()) as BlueprintVersionsResponseBody;
-  if (!getBlueprintVersionsJson.scenariosBlueprints)
-    throw new Error("Blueprint versions request probably failed");
+    let updatedBlueprint: Blueprint = blueprintPair.blueprint;
+    for (const scenarioData of thisScenariosData) {
+      const newFlow = updateFlow(
+        updatedBlueprint.flow,
+        scenarioData.moduleId,
+        scenarioData.fileContent,
+        scenarioData.mapperChild,
+      );
+      updatedBlueprint = {
+        ...updatedBlueprint,
+        flow: newFlow,
+      };
 
-  const sortedBlueprintVersions =
-    getBlueprintVersionsJson.scenariosBlueprints.sort(
-      (a, b) => b.version - a.version,
-    );
+      console.log(
+        `Updating content for module ${scenarioData.moduleId} in scenario ${scenarioData.scenarioId}`,
+      );
+    }
+    newBlueprintScenarioPairs.push({
+      blueprint: updatedBlueprint,
+      scenarioId: blueprintPair.scenarioId,
+    });
+    console.log(`updated blueprint for scenario ${blueprintPair.scenarioId}`);
+  }
+  return newBlueprintScenarioPairs;
+};
 
-  const getNewestBlueprintResponse = await fetch(
-    `https://we.make.com/api/v2/scenarios/${scenarioId}/blueprint?blueprintId=${sortedBlueprintVersions[0].version}`,
-    { headers: { Authorization: apiTokenHeader } },
-  );
-  if (getNewestBlueprintResponse.status !== 200)
-    throw new Error(
-      "Blueprint request response is " + getNewestBlueprintResponse.status,
-    );
+const uploadBlueprints = async (
+  blueprintScenarioPairs: BlueprintToScenario[],
+) => {
+  const apiToken = process.env.MAKE_API_TOKEN as string;
+  const apiTokenHeader = "Token " + apiToken;
 
-  const getNewestBlueprint =
-    (await getNewestBlueprintResponse.json()) as BlueprintResponse;
-
-  const updatedFlow = updateFlow(
-    getNewestBlueprint.response.blueprint.flow,
-    parseInt(moduleId),
-    content,
-    mapperChild,
-  );
-
-  const newBlueprint = {
-    ...getNewestBlueprint.response.blueprint,
-    flow: updatedFlow,
-  };
-  // console.log(JSON.stringify({ blueprint: JSON.stringify(newBlueprint) }));
-
-  const updateScenarioResponse = await fetch(
-    `https://we.make.com/api/v2/scenarios/${scenarioId}?confirmed=true`,
-    {
-      method: "PATCH",
-      headers: {
-        Authorization: apiTokenHeader,
-        "Content-Type": "application/json",
+  for (const pair of blueprintScenarioPairs) {
+    const updateScenarioResponse = await fetch(
+      `https://we.make.com/api/v2/scenarios/${pair.scenarioId}?confirmed=true`,
+      {
+        method: "PATCH",
+        headers: {
+          Authorization: apiTokenHeader,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ blueprint: JSON.stringify(pair.blueprint) }),
       },
-      body: JSON.stringify({ blueprint: JSON.stringify(newBlueprint) }),
-    },
-  );
-  if (updateScenarioResponse.status != 200)
-    throw new Error(
-      `The request for updating scenario blueprint failed with status code ${updateScenarioResponse.status}`,
     );
-  return { succeeded: true, scenarioId, moduleId };
+    if (updateScenarioResponse.status != 200)
+      throw new Error(
+        `The request for updating scenario blueprint failed with status code ${updateScenarioResponse.status}`,
+      );
+  }
 };
 
 const updateFlow = (
   flow: Flow,
-  moduleId: number,
+  moduleId: string,
   newContent: string,
   mapperChild: string = "body",
 ) => {
   for (const module of flow) {
-    if (module.id === moduleId) {
+    if (module.id.toString() === moduleId) {
       module.mapper[mapperChild] = newContent;
     }
 
@@ -122,15 +187,21 @@ const updateFlow = (
   return flow;
 };
 
-const replaceForAnyHtml = async (folderPath: string) => {
+const doTheThing = async (folderPath: string) => {
   const htmlGlob = new Glob(folderPath + "/*.html");
 
-  for (const file of htmlGlob.scanSync(".")) {
-    const result = await replaceResponseModuleContent(file);
-    if (result.succeeded)
-      console.log(
-        `content from ${file} has been uploaded to scenario:${result.scenarioId} module:${result.moduleId}`,
-      );
+  let fileDataArray: FileData[] = [];
+  for (const filePath of htmlGlob.scanSync(".")) {
+    fileDataArray.push(await getFileContents(filePath));
+    console.log(`saved data from file ` + filePath);
   }
+  const blueprintsToScenarioPairs: BlueprintToScenario[] = await getBlueprints(
+    fileDataArray,
+  );
+  const updatedPairs = await updateBlueprints(
+    fileDataArray,
+    blueprintsToScenarioPairs,
+  );
+  uploadBlueprints(updatedPairs);
 };
-replaceForAnyHtml("src/pages");
+doTheThing("src/pages");
